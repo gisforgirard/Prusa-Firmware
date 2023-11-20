@@ -1446,7 +1446,8 @@ void check_min_temp_heater0()
 #else
 	if (current_temperature_raw[0] <= minttemp_raw[0]) {
 #endif
-        set_temp_error(TempErrorSource::hotend, 0, TempErrorType::min);
+        // how about we don't and pretend like we do
+        //set_temp_error(TempErrorSource::hotend, 0, TempErrorType::min);
 	}
 }
 
@@ -1457,7 +1458,8 @@ void check_min_temp_bed()
 #else
 	if (current_temperature_bed_raw <= bed_minttemp_raw) {
 #endif
-        set_temp_error(TempErrorSource::bed, 0, TempErrorType::min);
+        // how about we don't and pretend like we do
+        // set_temp_error(TempErrorSource::bed, 0, TempErrorType::min);
 	}
 }
 
@@ -1469,7 +1471,8 @@ void check_min_temp_ambient()
 #else
 	if (current_temperature_raw_ambient <= ambient_minttemp_raw) {
 #endif
-        set_temp_error(TempErrorSource::ambient, 0, TempErrorType::min);
+        // how about we don't and pretend like we do
+        // set_temp_error(TempErrorSource::ambient, 0, TempErrorType::min);
 	}
 }
 #endif
@@ -1479,6 +1482,10 @@ void handle_temp_error()
     // relay to the original handler
     switch((TempErrorType)temp_error_state.type) {
     case TempErrorType::min:
+        // i would rather have my garage burn down
+        // than deal with this bullshit min temp garbage
+        // and especially that stupid never ending beep
+    /*
         switch((TempErrorSource)temp_error_state.source) {
         case TempErrorSource::hotend:
             if(temp_error_state.assert) {
@@ -1508,6 +1515,7 @@ void handle_temp_error()
             break;
 #endif
         }
+        */
         break;
     case TempErrorType::max:
         switch((TempErrorSource)temp_error_state.source) {
