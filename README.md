@@ -1,1 +1,1 @@
-This is the v3.13.2 branch with MINTEMP removed. I personally would rather have my garage burn down than have to listen to this stupid printer beeping nonstop. So far, that hasn't happened. MINTEMP ruins prusas. This makes them better.
+This is the v3.13.2 branch with MINTEMP removed that I accidentially merged with the default MK3 branch. I personally would rather have my garage burn down than have to listen to this stupid printer beeping nonstop. So far, that hasn't happened. MINTEMP ruins prusas. This makes them better.
