@@ -8,6 +8,7 @@
 #include "language.h"
 #include "Prusa_farm.h"
 #include "power_panic.h"
+#include "stopwatch.h"
 
 #ifdef SDSUPPORT
 
@@ -273,6 +274,7 @@ void CardReader::startFileprint()
   if(cardOK)
   {
     sdprinting = true;
+    SetPrinterState(PrinterState::IsSDPrinting); //set printer state to hide LCD menu
 	#ifdef SDCARD_SORT_ALPHA
 		//flush_presort();
 	#endif
@@ -556,7 +558,7 @@ uint32_t CardReader::getFileSize()
 
 void CardReader::getStatus(bool arg_P)
 {
-    if (isPrintPaused)
+    if (print_job_timer.isPaused())
     {
         if (saved_printing && (saved_printing_type == PowerPanic::PRINT_TYPE_SD))
             SERIAL_PROTOCOLLNPGM("SD print paused");
@@ -577,7 +579,7 @@ void CardReader::getStatus(bool arg_P)
         SERIAL_PROTOCOL(sdpos);
         SERIAL_PROTOCOL('/');
         SERIAL_PROTOCOLLN(filesize);
-        uint16_t time = ( _millis() - starttime ) / 60000U;
+        uint16_t time = print_job_timer.duration() / 60;
         SERIAL_PROTOCOL((int)(time / 60));
         SERIAL_PROTOCOL(':');
         SERIAL_PROTOCOLLN((int)(time % 60));
@@ -1018,6 +1020,7 @@ void CardReader::printingHasFinished()
     else
     {
       sdprinting = false;
+      SetPrinterState(PrinterState::SDPrintingFinished); //set printer state to show LCD menu after finished SD print
       if(SD_FINISHED_STEPPERRELEASE)
       {
           finishAndDisableSteppers();
@@ -1034,6 +1037,19 @@ bool CardReader::ToshibaFlashAir_GetIP(uint8_t *ip)
 {
     memset(ip, 0, 4);
     return card.readExtMemory(1, 1, 0x400+0x150, 4, ip);
+}
+
+//Used for Reprint action
+bool CardReader::FileExists(const char* filename)
+{
+  bool exists = false;
+
+    if (file.open(curDir, filename, O_READ))
+    {
+      exists = true;
+      file.close();
+    }
+    return exists;
 }
 
 #endif //SDSUPPORT

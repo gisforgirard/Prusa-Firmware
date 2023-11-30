@@ -102,6 +102,8 @@ const char MSG_SELFTEST_MOTOR[] PROGMEM_I1 = ISTR("Motor"); ////MSG_SELFTEST_MOT
 const char MSG_SELFTEST_FILAMENT_SENSOR[] PROGMEM_I1 = ISTR("Filament sensor"); ////MSG_SELFTEST_FILAMENT_SENSOR c=17
 const char MSG_SELFTEST_WIRINGERROR[] PROGMEM_I1 = ISTR("Wiring error"); ////MSG_SELFTEST_WIRINGERROR c=18
 const char MSG_SETTINGS[] PROGMEM_I1 = ISTR("Settings"); ////MSG_SETTINGS c=18
+const char MSG_SET_READY[] PROGMEM_I1 = ISTR("Set Ready"); ////MSG_SET_READY c=18
+const char MSG_SET_NOT_READY[] PROGMEM_I1 = ISTR("Set not Ready"); ////MSG_SET_NOT_READY c=18
 const char MSG_SELECT_LANGUAGE[] PROGMEM_I1 = ISTR("Select language"); ////MSG_SELECT_LANGUAGE c=18
 const char MSG_SORTING_FILES[] PROGMEM_I1 = ISTR("Sorting files"); ////MSG_SORTING_FILES c=20
 const char MSG_TOTAL[] PROGMEM_I1 = ISTR("Total"); ////MSG_TOTAL c=6
@@ -188,7 +190,7 @@ extern const char MSG_LOAD_ALL[] PROGMEM_I1 = ISTR("Load All"); ////MSG_LOAD_ALL
 extern const char MSG_NOZZLE_CNG_MENU [] PROGMEM_I1 = ISTR("Nozzle change");////MSG_NOZZLE_CNG_MENU c=18
 extern const char MSG_NOZZLE_CNG_READ_HELP [] PROGMEM_I1 = ISTR("For a Nozzle change please read\nprusa.io/nozzle-mk3s");////MSG_NOZZLE_CNG_READ_HELP c=20 r=4
 extern const char MSG_NOZZLE_CNG_CHANGED [] PROGMEM_I1 = ISTR("Hotend at 280C! Nozzle changed and tightened to specs?");////MSG_NOZZLE_CNG_CHANGED c=20 r=6
-
+extern const char MSG_REPRINT [] PROGMEM_I1 = ISTR("Reprint"); ////MSG_REPRINT c=18
 //not internationalized messages
 #if 0
 const char MSG_FW_VERSION_BETA[] PROGMEM_N1 = "You are using a BETA firmware version! It is in a development state! Use this version with CAUTION as it may DAMAGE the printer!"; ////MSG_FW_VERSION_BETA c=20 r=8
@@ -228,6 +230,9 @@ const char MSG_OCTOPRINT_PAUSED[] PROGMEM_N1 = "// action:paused"; ////
 const char MSG_OCTOPRINT_ASK_RESUME[] PROGMEM_N1 = "// action:resume"; ////
 const char MSG_OCTOPRINT_RESUMED[] PROGMEM_N1 = "// action:resumed"; ////
 const char MSG_OCTOPRINT_CANCEL[] PROGMEM_N1 = "// action:cancel"; ////
+const char MSG_OCTOPRINT_READY[] PROGMEM_N1 = "// action:ready"; ////
+const char MSG_OCTOPRINT_NOT_READY[] PROGMEM_N1 = "// action:not_ready"; ////
+const char MSG_OCTOPRINT_REPRINT[] PROGMEM_N1 = "// action:reprint"; ////
 const char MSG_FANCHECK_HOTEND[] PROGMEM_N1 = "Err:HOTEND FAN ERROR"; ////c=20
 const char MSG_FANCHECK_PRINT[] PROGMEM_N1 = "Err:PRINT FAN ERROR"; ////c=20
 const char MSG_M112_KILL[] PROGMEM_N1 = "M112 called. Emergency Stop."; ////c=20

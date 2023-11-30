@@ -89,6 +89,7 @@
 #include "Tcodes.h"
 #include "Dcodes.h"
 #include "SpoolJoin.h"
+#include "stopwatch.h"
 
 #ifndef LA_NOCOMPAT
 #include "la10compat.h"
@@ -174,7 +175,7 @@ static LongTimer crashDetTimer;
 
 bool mesh_bed_leveling_flag = false;
 
-uint32_t total_filament_used;
+uint32_t total_filament_used; // unit mm/100 or 10um
 HeatingStatus heating_status;
 int fan_edge_counter[2];
 int fan_speed[2];
@@ -199,6 +200,8 @@ float current_position[NUM_AXIS] = { 0.0, 0.0, 0.0, 0.0 };
 float min_pos[3] = { X_MIN_POS, Y_MIN_POS, Z_MIN_POS };
 float max_pos[3] = { X_MAX_POS, Y_MAX_POS, Z_MAX_POS };
 bool axis_known_position[3] = {false, false, false};
+
+static float pause_position[3] = { X_PAUSE_POS, Y_PAUSE_POS, Z_PAUSE_LIFT };
 
 uint8_t fanSpeed = 0;
 uint8_t newFanSpeed = 0;
@@ -287,9 +290,6 @@ static uint32_t max_inactive_time = 0;
 static uint32_t stepper_inactive_time = DEFAULT_STEPPER_DEACTIVE_TIME*1000l;
 static uint32_t safetytimer_inactive_time = DEFAULT_SAFETYTIMER_TIME_MINS*60*1000ul;
 
-uint32_t starttime;
-uint32_t pause_time;
-uint32_t start_pause_print;
 ShortTimer usb_timer;
 
 bool Stopped=false;
@@ -507,12 +507,12 @@ void servo_init()
 }
 
 bool __attribute__((noinline)) printJobOngoing() {
-    return (IS_SD_PRINTING || usb_timer.running());
+    return (IS_SD_PRINTING || usb_timer.running() || print_job_timer.isRunning());
 }
 
 bool __attribute__((noinline)) printer_active() {
     return printJobOngoing()
-        || isPrintPaused
+        || print_job_timer.isPaused()
         || saved_printing
         || (lcd_commands_type != LcdCommands::Idle)
         || MMU2::mmu2.MMU_PRINT_SAVED()
@@ -533,7 +533,7 @@ bool check_fsensor() {
 bool __attribute__((noinline)) babystep_allowed() {
     return ( !homing_flag
         && !mesh_bed_leveling_flag
-        && !isPrintPaused
+        && !print_job_timer.isPaused()
         && ((lcd_commands_type == LcdCommands::Layer1Cal && CHECK_ALL_HEATERS)
             || printJobOngoing()
             || lcd_commands_type == LcdCommands::Idle
@@ -556,8 +556,8 @@ void crashdet_stop_and_save_print()
 
 void crashdet_restore_print_and_continue()
 {
-	restore_print_from_ram_and_continue(default_retraction); //XYZ = orig, E +1mm unretract
-//	babystep_apply();
+  restore_print_from_ram_and_continue(default_retraction); //XYZ = orig, E +1mm unretract
+//babystep_apply();
 }
 
 void crashdet_fmt_error(char* buf, uint8_t mask)
@@ -631,8 +631,8 @@ void crashdet_detected(uint8_t mask)
 
 void crashdet_recover()
 {
-	crashdet_restore_print_and_continue();
-	if (lcd_crash_detect_enabled()) tmc2130_sg_stop_on_crash = true;
+  if (!print_job_timer.isPaused()) crashdet_restore_print_and_continue();
+  if (lcd_crash_detect_enabled()) tmc2130_sg_stop_on_crash = true;
 }
 
 void crashdet_cancel()
@@ -1729,11 +1729,11 @@ void loop()
         KEEPALIVE_STATE(NOT_BUSY);
     }
 
-	if (isPrintPaused && saved_printing_type == PowerPanic::PRINT_TYPE_USB) { //keep believing that usb is being printed. Prevents accessing dangerous menus while pausing.
+	if (print_job_timer.isPaused() && saved_printing_type == PowerPanic::PRINT_TYPE_USB) { //keep believing that usb is being printed. Prevents accessing dangerous menus while pausing.
 		usb_timer.start();
 	}
 	else if (usb_timer.expired(10000)) { //just need to check if it expired. Nothing else is needed to be done.
-		;
+        SetPrinterState(PrinterState::HostPrintingFinished); //set printer state to show LCD menu after finished SD print
 	}
     
 #ifdef PRUSA_M28
@@ -1826,7 +1826,7 @@ void loop()
 }
   //check heater every n milliseconds
   manage_heater();
-  manage_inactivity(isPrintPaused);
+  manage_inactivity(print_job_timer.isPaused());
   checkHitEndstops();
   lcd_update(0);
 #ifdef TMC2130
@@ -3112,8 +3112,7 @@ bool gcode_M45(bool onlyZ, int8_t verbosity_level)
     // Only Z calibration?
 	if (!onlyZ)
 	{
-		setTargetBed(0);
-		setTargetHotend(0);
+		disable_heater();
 		eeprom_adjust_bed_reset(); //reset bed level correction
 	}
 
@@ -3385,7 +3384,7 @@ static void mmu_M600_unload_filament() {
 
 /// @brief load filament for mmu v2
 /// @par nozzle_temp nozzle temperature to load filament
-static void mmu_M600_load_filament(bool automatic, float nozzle_temp) {
+static void mmu_M600_load_filament(bool automatic) {
     uint8_t slot;
     if (automatic) {
         slot = SpoolJoin::spooljoin.nextSlot();
@@ -3394,7 +3393,7 @@ static void mmu_M600_load_filament(bool automatic, float nozzle_temp) {
         slot = choose_menu_P(_T(MSG_SELECT_FILAMENT), _T(MSG_FILAMENT));
     }
 
-    setTargetHotend(nozzle_temp);
+    setTargetHotend(saved_extruder_temperature);
 
     MMU2::mmu2.load_filament_to_nozzle(slot);
 
@@ -3404,7 +3403,6 @@ static void mmu_M600_load_filament(bool automatic, float nozzle_temp) {
 
 static void gcode_M600(const bool automatic, const float x_position, const float y_position, const float z_shift, const float e_shift, const float e_shift_late) {
     st_synchronize();
-    float lastpos[4];
 
     // When using an MMU, save the currently use slot number
     // so the firmware can know which slot to eject after the filament
@@ -3413,18 +3411,11 @@ static void gcode_M600(const bool automatic, const float x_position, const float
 
     prusa_statistics(22);
 
-    //First backup current position and settings
-    int feedmultiplyBckp = feedmultiply;
-    float HotendTempBckp = saved_extruder_temperature;
-    uint8_t fanSpeedBckp = fanSpeed;
-
-    memcpy(lastpos, current_position, sizeof(lastpos));
-
     // Turn off the fan
     fanSpeed = 0;
 
     // Retract E
-    if (!isPrintPaused)
+    if (!print_job_timer.isPaused())
     {
       current_position[E_AXIS] += e_shift;
       plan_buffer_line_curposXYZE(FILAMENTCHANGE_RFEED);
@@ -3450,7 +3441,7 @@ static void gcode_M600(const bool automatic, const float x_position, const float
         mmu_M600_unload_filament();
     } else {
         // Beep, manage nozzle heater and wait for user to start unload filament
-        M600_wait_for_user(HotendTempBckp);
+        M600_wait_for_user();
         unload_filament(e_shift_late);
     }
     st_synchronize();          // finish moves
@@ -3475,19 +3466,19 @@ static void gcode_M600(const bool automatic, const float x_position, const float
         else // MMU is enabled
         {
             if (!automatic) mmu_M600_filament_change_screen(eject_slot);
-            mmu_M600_load_filament(automatic, HotendTempBckp);
+            mmu_M600_load_filament(automatic);
         }
         if (!automatic)
-            M600_check_state(HotendTempBckp);
+            M600_check_state();
     
         lcd_update_enable(true);
     
         // Not let's go back to print
-        fanSpeed = fanSpeedBckp;
+        fanSpeed = saved_fan_speed;
     
         // Feed a little of filament to stabilize pressure
         if (!automatic) {
-            if (isPrintPaused)
+            if (print_job_timer.isPaused())
             {
                 // Return to retracted state during a pause
                 // @todo is retraction really needed? E-position is reverted a few lines below
@@ -3506,24 +3497,24 @@ static void gcode_M600(const bool automatic, const float x_position, const float
         }
 
         // Move XY back
-        plan_buffer_line(lastpos[X_AXIS], lastpos[Y_AXIS], current_position[Z_AXIS], current_position[E_AXIS], FILAMENTCHANGE_XYFEED);
+        plan_buffer_line(saved_pos[X_AXIS], saved_pos[Y_AXIS], current_position[Z_AXIS], current_position[E_AXIS], FILAMENTCHANGE_XYFEED);
         st_synchronize();
 
         // Move Z back
-        plan_buffer_line(lastpos[X_AXIS], lastpos[Y_AXIS], lastpos[Z_AXIS], current_position[E_AXIS], FILAMENTCHANGE_ZFEED);
+        plan_buffer_line(saved_pos[X_AXIS], saved_pos[Y_AXIS], saved_pos[Z_AXIS], current_position[E_AXIS], FILAMENTCHANGE_ZFEED);
         st_synchronize();
 
         // Set E position to original
-        plan_set_e_position(lastpos[E_AXIS]);
+        plan_set_e_position(saved_pos[E_AXIS]);
     
-        memcpy(current_position, lastpos, sizeof(lastpos));
+        memcpy(current_position, saved_pos, sizeof(saved_pos));
         set_destination_to_current();
     
         // Recover feed rate
-        feedmultiply = feedmultiplyBckp;
-        enquecommandf_P(MSG_M220, feedmultiplyBckp);
+        feedmultiply = saved_feedmultiply2;
+        enquecommandf_P(MSG_M220, saved_feedmultiply2);
     }
-    if (isPrintPaused) lcd_setstatuspgm(_T(MSG_PRINT_PAUSED));
+    if (print_job_timer.isPaused()) lcd_setstatuspgm(_T(MSG_PRINT_PAUSED));
     else lcd_setstatuspgm(MSG_WELCOME);
     custom_message_type = CustomMsg::Status;
 }
@@ -5255,7 +5246,7 @@ void process_commands()
 	### M24 - Start SD print <a href="https://reprap.org/wiki/G-code#M24:_Start.2Fresume_SD_print">M24: Start/resume SD print</a>
     */
     case 24:
-    if (isPrintPaused)
+    if (print_job_timer.isPaused())
       lcd_resume_print();
     else
     {
@@ -5270,7 +5261,7 @@ void process_commands()
       }
 
       card.startFileprint();
-      starttime=_millis();
+      print_job_timer.start();
       if (MMU2::mmu2.Enabled())
       {
         if (MMU2::mmu2.FindaDetectsFilament() && !fsensor.getFilamentPresent())
@@ -5388,7 +5379,7 @@ void process_commands()
                 la10c_reset();
 #endif
             }
-            starttime=_millis(); // procedure calls count as normal print time.
+            print_job_timer.start(); // procedure calls count as normal print time.
         }
       }
     } break;
@@ -5412,7 +5403,7 @@ void process_commands()
     case 31: //M31 take time since the start of the SD print or an M109 command
       {
       char time[30];
-      uint32_t t = (_millis() - starttime) / 1000;
+      uint32_t t = print_job_timer.duration();
       int16_t sec, min;
       min = t / 60;
       sec = t % 60;
@@ -5839,6 +5830,45 @@ Sigma_Exit:
 #endif		// ENABLE_AUTO_BED_LEVELING
 
     /*!
+    ### M72 - Set/get Printer State <a href="https://reprap.org/wiki/G-code#M72:_Set.2FGet_Printer_State">M72: Set/get Printer State</a>
+    Without any parameter get printer state
+      - 0 = NotReady  Used by PrusaConnect
+      - 1 = IsReady   Used by PrusaConnect
+      - 2 = Idle
+      - 3 = SD printing finished
+      - 4 = Host printing finished
+      - 5 = SD printing
+      - 6 = Host printing
+
+    #### Usage
+
+        M72 [ S ]
+
+    #### Parameters
+        - `Snnn` - Set printer state 0 = not_ready, 1 = ready
+    */
+    case 72:
+    {
+        if(code_seen('S')){
+            switch (code_value_uint8()){
+            case 0:
+                SetPrinterState(PrinterState::NotReady);
+                break;
+            case 1:
+                SetPrinterState(PrinterState::IsReady);
+                break;
+            default:
+                break;
+            }
+        } else {
+            printf_P(_N("PrinterState: %d\n"),uint8_t(GetPrinterState()));
+            break;
+        }
+        break;
+    }
+
+
+    /*!
     ### M73 - Set/get print progress <a href="https://reprap.org/wiki/G-code#M73:_Set.2FGet_build_percentage">M73: Set/Get build percentage</a>
     #### Usage
     
@@ -5871,6 +5901,48 @@ Sigma_Exit:
             printf_P(_msg_mode_done_remain, _N("NORMAL"), int8_t(print_percent_done_normal), print_time_remaining_normal, print_time_to_change_normal);
             printf_P(_msg_mode_done_remain, _N("SILENT"), int8_t(print_percent_done_silent), print_time_remaining_silent, print_time_to_change_silent);
         }
+        break;
+    }
+
+    /*!
+    ### M75 - Start the print job timer <a href="https://reprap.org/wiki/G-code#M75:_Start_the_print_job_timer">M75: Start the print job timer</a>
+    */
+    case 75:
+    {
+        print_job_timer.start();
+        break;
+    }
+
+    /*!
+    ### M76 - Pause the print job timer <a href="https://reprap.org/wiki/G-code#M76:_Pause_the_print_job_timer">M76: Pause the print job timer</a>
+    */
+    case 76:
+    {
+        print_job_timer.pause();
+        break;
+    }
+
+    /*!
+    ### M77 - Stop the print job timer <a href="https://reprap.org/wiki/G-code#M77:_Stop_the_print_job_timer">M77: Stop the print job timer</a>
+    */
+    case 77:
+    {
+        print_job_timer.stop();
+        save_statistics();
+        break;
+    }
+
+    /*!
+    ### M78 - Show statistical information about the print jobs <a href="https://reprap.org/wiki/G-code#M78:_Show_statistical_information_about_the_print_jobs">M78: Show statistical information about the print jobs</a>
+    */
+    case 78:
+    {
+        // @todo useful for maintenance notifications
+        SERIAL_ECHOPGM("STATS ");
+        SERIAL_ECHO(eeprom_read_dword((uint32_t *)EEPROM_TOTALTIME));
+        SERIAL_ECHOPGM(" min ");
+        SERIAL_ECHO(eeprom_read_dword((uint32_t *)EEPROM_FILAMENTUSED));
+        SERIAL_ECHOLNPGM(" cm.");
         break;
     }
 
@@ -6049,8 +6121,7 @@ Sigma_Exit:
         LCD_MESSAGERPGM(_T(MSG_HEATING_COMPLETE));
 		heating_status = HeatingStatus::EXTRUDER_HEATING_COMPLETE;
         prusa_statistics(2);
-        
-        //starttime=_millis();
+
         previous_millis_cmd.start();
       }
       break;
@@ -6397,12 +6468,14 @@ Sigma_Exit:
           // pause the print for 30s and ask the user to upgrade the firmware.
           show_upgrade_dialog_if_version_newer(++ strchr_pointer);
       } else {
+          char custom_mendel_name[MAX_CUSTOM_MENDEL_NAME_LENGTH];
+          eeprom_read_block(custom_mendel_name,(char*)EEPROM_CUSTOM_MENDEL_NAME,MAX_CUSTOM_MENDEL_NAME_LENGTH);
           SERIAL_ECHOPGM("FIRMWARE_NAME:Prusa-Firmware ");
           SERIAL_ECHORPGM(FW_VERSION_STR_P());
           SERIAL_ECHOPGM(" based on Marlin FIRMWARE_URL:https://github.com/prusa3d/Prusa-Firmware PROTOCOL_VERSION:");
           SERIAL_ECHOPGM(PROTOCOL_VERSION);
           SERIAL_ECHOPGM(" MACHINE_TYPE:");
-          SERIAL_ECHOPGM(CUSTOM_MENDEL_NAME);
+          SERIAL_PROTOCOL(custom_mendel_name);
           SERIAL_ECHOPGM(" EXTRUDER_COUNT:" STRINGIFY(EXTRUDERS));
           SERIAL_ECHOPGM(" UUID:");
           SERIAL_ECHOLNPGM(MACHINE_UUID);
@@ -7670,17 +7743,77 @@ Sigma_Exit:
 
     /*!
     ### M601 - Pause print <a href="https://reprap.org/wiki/G-code#M601:_Pause_print">M601: Pause print</a>
+    Without any parameters it will park the extruder to default or last set position.
+    The default pause position will be set during power up and a reset, the new pause positions aren't permanent.
+    #### Usage
+
+         M601 [ X | Y | Z | S ]
+
+    #### Parameters
+     - `X` - X position to park at (default X_PAUSE_POS 50) these are saved until change or reset.
+     - `Y` - Y position to park at (default Y_PAUSE_POS 190) these are saved until change or reset.
+     - `Z` - Z raise before park (default Z_PAUSE_LIFT 20) these are saved until change or reset.
+     - `S` - Set values [S0 = set to default values | S1 = set values] without pausing
     */
     /*!
-    ### M125 - Pause print (TODO: not implemented)
+
+    ### M125 - Pause print <a href="https://reprap.org/wiki/G-code#M125:_Pause_print">M125: Pause print</a>
+    Without any parameters it will park the extruder to default or last set position.
+    The default pause position will be set during power up and a reset, the new pause positions aren't permanent.
+    #### Usage
+
+         M125 [ X | Y | Z | S ]
+
+    #### Parameters
+     - `X` - X position to park at (default X_PAUSE_POS 50) these are saved until change or reset.
+     - `Y` - Y position to park at (default Y_PAUSE_POS 190) these are saved until change or reset.
+     - `Z` - Z raise before park (default Z_PAUSE_LIFT 20) these are saved until change or reset.
+     - `S` - Set values [S0 = set to default values | S1 = set values] without pausing
     */
     /*!
     ### M25 - Pause SD print <a href="https://reprap.org/wiki/G-code#M25:_Pause_SD_print">M25: Pause SD print</a>
+    Without any parameters it will park the extruder to default or last set position.
+    The default pause position will be set during power up and a reset, the new pause positions aren't permanent.
+    #### Usage
+
+         M25 [ X | Y | Z | S ]
+
+    #### Parameters
+     - `X` - X position to park at (default X_PAUSE_POS 50) these are saved until change or reset.
+     - `Y` - Y position to park at (default Y_PAUSE_POS 190) these are saved until change or reset.
+     - `Z` - Z raise before park (default Z_PAUSE_LIFT 20) these are saved until change or reset.
+     - `S` - Set values [S0 = set to default values | S1 = set values] without pausing
     */
     case 25:
+    case 125:
     case 601:
     {
-        if (!isPrintPaused) {
+        //Set new pause position for all three axis XYZ
+        for (uint8_t axis = 0; axis < E_AXIS; axis++) {
+          if (code_seen(axis_codes[axis])) {
+            //Check that the positions are within hardware limits
+            pause_position[axis] = constrain(code_value(), min_pos[axis], max_pos[axis]);
+          }
+        }
+        //Set default or new pause position without pausing
+        if (code_seen('S')) {
+            if ( code_value_uint8() == 0 ) {
+                pause_position[X_AXIS] = X_PAUSE_POS;
+                pause_position[Y_AXIS] = Y_PAUSE_POS;
+                pause_position[Z_AXIS] = Z_PAUSE_LIFT;
+            }
+        break;
+        }
+/*
+        //Debug serial output
+        SERIAL_ECHOPGM("X:");
+        SERIAL_ECHOLN(pause_position[X_AXIS]);
+        SERIAL_ECHOPGM("Y:");
+        SERIAL_ECHOLN(pause_position[Y_AXIS]);
+        SERIAL_ECHOPGM("Z:");
+        SERIAL_ECHOLN(pause_position[Z_AXIS]);
+*/
+        if (!print_job_timer.isPaused()) {
             st_synchronize();
             ClearToSend(); //send OK even before the command finishes executing because we want to make sure it is not skipped because of cmdqueue_pop_front();
             cmdqueue_pop_front(); //trick because we want skip this command (M601) after restore
@@ -7694,7 +7827,7 @@ Sigma_Exit:
     */
     case 602:
     {
-        if (isPrintPaused) lcd_resume_print();
+        if (print_job_timer.isPaused()) lcd_resume_print();
     }
     break;
 
@@ -7938,6 +8071,7 @@ Sigma_Exit:
       - M862.3 { P"<model_name>" | Q }
       - M862.4 { P<fw_version> | Q }
       - M862.5 { P<gcode_level> | Q }
+      - M862.6 Not used but reserved by 32-bit
     
     When run with P<> argument, the check is performed against the input value.
     When run with Q argument, the current value is shown.
@@ -8019,6 +8153,10 @@ Sigma_Exit:
                          }
                     else if(code_seen('Q'))
                          SERIAL_PROTOCOLLN(GCODE_LEVEL);
+                    break;
+               case ClPrintChecking::_Features:  // ~ .6 used by 32-bit
+                    break;
+               default:
                     break;
                }
         break;
@@ -9388,8 +9526,7 @@ static void handleSafetyTimer()
     }
     else if (safetyTimer.expired(farm_mode?FARM_DEFAULT_SAFETYTIMER_TIME_ms:safetytimer_inactive_time))
     {
-        setTargetBed(0);
-        setTargetHotend(0);
+        disable_heater();
         lcd_show_fullscreen_message_and_wait_P(_i("Heating disabled by safety timer."));////MSG_BED_HEATING_SAFETY_DISABLED c=20 r=4
     }
 }
@@ -9569,7 +9706,7 @@ void ThermalStop(bool allow_recovery)
 
         // Either pause or stop the print
         if(allow_recovery && printJobOngoing()) {
-            if (!isPrintPaused) {
+            if (!print_job_timer.isPaused()) {
                 lcd_setalertstatuspgm(_T(MSG_PAUSED_THERMAL_ERROR), LCD_STATUS_CRITICAL);
 
                 // we cannot make a distinction for the host here, the pause must be instantaneous
@@ -9703,13 +9840,15 @@ void setPwmFrequency(uint8_t pin, int val)
 }
 #endif //FAST_PWM_FAN
 
-void save_statistics(uint32_t _total_filament_used, uint32_t _total_print_time) {
+void save_statistics() {
     uint32_t _previous_filament = eeprom_init_default_dword((uint32_t *)EEPROM_FILAMENTUSED, 0); //_previous_filament unit: meter
     uint32_t _previous_time = eeprom_init_default_dword((uint32_t *)EEPROM_TOTALTIME, 0);        //_previous_time unit: min
 
-    eeprom_update_dword((uint32_t *)EEPROM_TOTALTIME, _previous_time + _total_print_time); // EEPROM_TOTALTIME unit: min
-    eeprom_update_dword((uint32_t *)EEPROM_FILAMENTUSED, _previous_filament + (_total_filament_used / 1000));
+    uint32_t time_minutes = print_job_timer.duration() / 60;
+    eeprom_update_dword((uint32_t *)EEPROM_TOTALTIME, _previous_time + time_minutes); // EEPROM_TOTALTIME unit: min
+    eeprom_update_dword((uint32_t *)EEPROM_FILAMENTUSED, _previous_filament + (total_filament_used / 1000));
 
+    print_job_timer.reset();
     total_filament_used = 0;
 
     if (MMU2::mmu2.Enabled()) {
@@ -10398,19 +10537,18 @@ float temp_compensation_pinda_thermistor_offset(float temperature_pinda)
 void long_pause() //long pause print
 {
 	st_synchronize();
-	start_pause_print = _millis();
 
     // Stop heaters
     heating_status = HeatingStatus::NO_HEATING;
     setTargetHotend(0);
 
     // Lift z
-    raise_z(Z_PAUSE_LIFT);
+    raise_z(pause_position[Z_AXIS]);
 
     // Move XY to side
     if (axis_known_position[X_AXIS] && axis_known_position[Y_AXIS]) {
-        current_position[X_AXIS] = X_PAUSE_POS;
-        current_position[Y_AXIS] = Y_PAUSE_POS;
+        current_position[X_AXIS] = pause_position[X_AXIS];
+        current_position[Y_AXIS] = pause_position[Y_AXIS];
         plan_buffer_line_curposXYZE(50);
     }
 
@@ -10832,8 +10970,7 @@ void load_filament_final_feed()
 }
 
 //! @brief Wait for user to check the state
-//! @par nozzle_temp nozzle temperature to load filament
-void M600_check_state(float nozzle_temp)
+void M600_check_state()
 {
     uint8_t lcd_change_filament_state = 0;
     while (lcd_change_filament_state != 1)
@@ -10855,7 +10992,7 @@ void M600_check_state(float nozzle_temp)
                 mmu_M600_filament_change_screen(eject_slot);
 
                 // After user clicks knob, MMU will load the filament
-                mmu_M600_load_filament(false, nozzle_temp);
+                mmu_M600_load_filament(false);
             } else {
                 M600_load_filament_movements();
             }
@@ -10881,9 +11018,7 @@ void M600_check_state(float nozzle_temp)
 //!
 //! Beep, manage nozzle heater and wait for user to start unload filament
 //! If times out, active extruder temperature is set to 0.
-//!
-//! @param HotendTempBckp Temperature to be restored for active extruder, after user resolves MMU problem.
-void M600_wait_for_user(float HotendTempBckp) {
+void M600_wait_for_user() {
 
 		KEEPALIVE_STATE(PAUSED_FOR_USER);
 
@@ -10912,7 +11047,7 @@ void M600_wait_for_user(float HotendTempBckp) {
 				delay_keep_alive(4);
 		
 				if (lcd_clicked()) {
-					setTargetHotend(HotendTempBckp);
+					setTargetHotend(saved_extruder_temperature);
 					lcd_wait_for_heater();
 					wait_for_user_state = 2;
 				}

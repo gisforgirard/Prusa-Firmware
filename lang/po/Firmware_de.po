@@ -2583,6 +2583,21 @@ msgstr "Sensitivität"
 msgid "Mesh bed leveling failed. Please run Z calibration."
 msgstr "MeshBett Ausgleich fehlgeschlagen. Z Kalibrierung ausführen."
 
+#. MSG_SET_READY c=18
+#: ../../Firmware/messages.cpp:104 ../../Firmware/ultralcd.cpp:5204
+msgid "Set Ready"
+msgstr "Bereit setzen"
+
+#. MSG_SET_NOT_READY c=18
+#: ../../Firmware/messages.cpp:106 ../../Firmware/ultralcd.cpp:5211
+msgid "Set not Ready"
+msgstr "Nicht breit setzen"
+
+#. MSG_REPRINT c=18
+#: ../../Firmware/messages.cpp:190 ../../Firmware/ultralcd.cpp:5191
+msgid "Reprint"
+msgstr "Druck wiederholen"
+
 #~ msgid "Remove old filament and press the knob to start loading new filament."
 #~ msgstr "Entferne das alte Fil. und drücke den Knopf, um das neue zu laden."
 

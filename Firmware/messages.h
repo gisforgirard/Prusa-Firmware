@@ -104,6 +104,8 @@ extern const char MSG_SELFTEST_MOTOR[];
 extern const char MSG_SELFTEST_FILAMENT_SENSOR[];
 extern const char MSG_SELFTEST_WIRINGERROR[];
 extern const char MSG_SETTINGS[];
+extern const char MSG_SET_READY[];
+extern const char MSG_SET_NOT_READY[];
 extern const char MSG_SELECT_LANGUAGE[];
 extern const char MSG_SORTING_FILES[];
 extern const char MSG_TOTAL[];
@@ -189,6 +191,7 @@ extern const char MSG_LOAD_ALL[];
 extern const char MSG_NOZZLE_CNG_MENU [];
 extern const char MSG_NOZZLE_CNG_READ_HELP [];
 extern const char MSG_NOZZLE_CNG_CHANGED [];
+extern const char MSG_REPRINT [];
 
 //not internationalized messages
 #if 0
@@ -231,6 +234,9 @@ extern const char MSG_OCTOPRINT_PAUSED[];
 extern const char MSG_OCTOPRINT_ASK_RESUME[];
 extern const char MSG_OCTOPRINT_RESUMED[];
 extern const char MSG_OCTOPRINT_CANCEL[];
+extern const char MSG_OCTOPRINT_READY[];
+extern const char MSG_OCTOPRINT_NOT_READY[];
+extern const char MSG_OCTOPRINT_REPRINT[];
 extern const char MSG_FANCHECK_HOTEND[];
 extern const char MSG_FANCHECK_PRINT[];
 extern const char MSG_M112_KILL[];

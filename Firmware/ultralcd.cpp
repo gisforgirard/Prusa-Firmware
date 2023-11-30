@@ -13,7 +13,7 @@
 #include "ConfigurationStore.h"
 #include "printers.h"
 #include <string.h>
-
+#include "stopwatch.h"
 
 #include "lcd.h"
 #include "menu.h"
@@ -67,8 +67,6 @@ static bool extraPurgeNeeded = false; ///< lcd_commands - detect if extra purge 
 
 CustomMsg custom_message_type = CustomMsg::Status;
 uint8_t custom_message_state = 0;
-
-bool isPrintPaused = false;
 
 static ShortTimer display_time; //just timer for showing pid finished message on lcd;
 static uint16_t pid_temp = DEFAULT_PID_TEMP;
@@ -487,7 +485,7 @@ void lcdui_print_time(void)
             print_t = print_tr;
             suff = 'R';
         } else
-            print_t = (_millis() - starttime) / 60000;
+            print_t = print_job_timer.duration() / 60;
 
         if (feedmultiply != 100 && (print_t == print_tr || print_t == print_tc)) {
             suff_doubt = '?';
@@ -785,6 +783,7 @@ void lcd_commands()
             custom_message_type = CustomMsg::Status;
             lcd_setstatuspgm(_T(MSG_PRINT_ABORTED));
             lcd_commands_type = LcdCommands::Idle;
+            SetPrinterState(PrinterState::Idle);
             lcd_commands_step = 0;
             lcd_print_stop_finish();
         }
@@ -800,6 +799,7 @@ void lcd_commands()
 				lcd_setstatuspgm(_T(MSG_PRINT_PAUSED));
 			}
 			lcd_commands_type = LcdCommands::Idle;
+			SetPrinterState(PrinterState::Idle);
 			lcd_commands_step = 0;
 			long_pause();
 		}
@@ -860,6 +860,7 @@ void lcd_commands()
                 lcd_setstatuspgm(MSG_WELCOME);
                 lcd_commands_step = 0;
                 lcd_commands_type = LcdCommands::Idle;
+                SetPrinterState(PrinterState::Idle);
                 if (eeprom_read_byte((uint8_t*)EEPROM_WIZARD_ACTIVE))
                     lcd_wizard(WizState::RepeatLay1Cal);
                 break;
@@ -901,6 +902,7 @@ void lcd_commands()
 			pid_temp = DEFAULT_PID_TEMP;
 			lcd_commands_step = 0;
 			lcd_commands_type = LcdCommands::Idle;
+			SetPrinterState(PrinterState::Idle);
 		}
 	}
 
@@ -939,6 +941,7 @@ void lcd_commands()
         case 1:
             lcd_commands_step = 0;
             lcd_commands_type = LcdCommands::Idle;
+            SetPrinterState(PrinterState::Idle);
             thermal_model_set_warn_beep(true);
             bool res = thermal_model_autotune_result();
             if (eeprom_read_byte((uint8_t*)EEPROM_WIZARD_ACTIVE)) {
@@ -997,6 +1000,7 @@ void lcd_commands()
                 lcd_setstatuspgm(MSG_WELCOME);
                 lcd_commands_step = 0;
                 lcd_commands_type = LcdCommands::Idle;
+                SetPrinterState(PrinterState::Idle);
                 break;
             }
         }
@@ -1017,7 +1021,8 @@ void lcd_pause_print()
     stop_and_save_print_to_ram(0.0, -default_retraction);
 
     SERIAL_ECHOLNRPGM(MSG_OCTOPRINT_PAUSED);
-    isPrintPaused = true;
+
+    print_job_timer.pause();
 
     // return to status is required to continue processing in the main loop!
     lcd_commands_type = LcdCommands::LongPause;
@@ -1038,8 +1043,7 @@ static void lcd_move_menu_axis();
 
 static void lcd_cooldown()
 {
-  setTargetHotend(0);
-  setTargetBed(0);
+  disable_heater();
   fanSpeed = 0;
   lcd_return_to_status();
 }
@@ -1995,7 +1999,7 @@ void mFilamentItem(uint16_t nTemp, uint16_t nTempBed)
             if (!bFilamentPreheatState)
             {
                 setTargetHotend(0);
-                if (!isPrintPaused) setTargetBed(0);
+                if (!print_job_timer.isPaused()) setTargetBed(0);
                 menu_back();
             }
             menu_back();
@@ -2307,10 +2311,11 @@ void lcd_AutoLoadFilament() {
 void lcd_menu_statistics()
 {
     lcd_timeoutToStatus.stop(); //infinite timeout
-	if (IS_SD_PRINTING)
+	if (printJobOngoing())
 	{
 		const float _met = ((float)total_filament_used) / (100000.f);
-		const uint32_t _t = (_millis() - starttime) / 1000ul;
+
+		const uint32_t _t = print_job_timer.duration();
 		const uint32_t _h = (_t / 60) / 60;
 		const uint8_t _m = (_t / 60) % 60;
 		const uint8_t _s = _t % 60;
@@ -2722,8 +2727,7 @@ void pid_extruder()
 
 #ifdef PINDA_THERMISTOR
 bool lcd_wait_for_pinda(float temp) {
-	setTargetHotend(0);
-	setTargetBed(0);
+	disable_heater();
 	LongTimer pinda_timeout;
 	pinda_timeout.start();
 	bool target_temp_reached = true;
@@ -2754,8 +2758,7 @@ void lcd_wait_for_heater() {
 }
 
 void lcd_wait_for_cool_down() {
-	setTargetHotend(0);
-	setTargetBed(0);
+	disable_heater();
 	uint8_t fanSpeedBckp = fanSpeed;
 	fanSpeed = 255;
 	while ((degHotend(0)>MAX_HOTEND_TEMP_CALIBRATION) || (degBed() > MAX_BED_TEMP_CALIBRATION)) {
@@ -4434,7 +4437,7 @@ static void lcd_settings_menu()
 
 	MENU_ITEM_SUBMENU_P(_i("Temperature"), lcd_control_temperature_menu);////MSG_TEMPERATURE c=18
 
-	if (!printer_active() || isPrintPaused)
+	if (!printer_active() || print_job_timer.isPaused())
     {
 	    MENU_ITEM_SUBMENU_P(_i("Move axis"), lcd_move_menu_axis);////MSG_MOVE_AXIS c=18
 	    MENU_ITEM_GCODE_P(_i("Disable steppers"), MSG_M84);////MSG_DISABLE_STEPPERS c=18
@@ -4478,7 +4481,7 @@ static void lcd_settings_menu()
     MENU_ITEM_TOGGLE_P(_T(MSG_RPI_PORT), (selectedSerialPort == 0) ? _T(MSG_OFF) : _T(MSG_ON), lcd_second_serial_set);
 #endif //HAS_SECOND_SERIAL
 
-    if (!isPrintPaused) MENU_ITEM_SUBMENU_P(_T(MSG_BABYSTEP_Z), lcd_babystep_z);
+    if (!print_job_timer.isPaused()) MENU_ITEM_SUBMENU_P(_T(MSG_BABYSTEP_Z), lcd_babystep_z);
 
 #if (LANG_MODE != 0)
 	MENU_ITEM_SUBMENU_P(_T(MSG_SELECT_LANGUAGE), lcd_language_menu);
@@ -5008,8 +5011,7 @@ void lcd_resume_print()
     Stopped = false;
 
     restore_print_from_ram_and_continue(default_retraction);
-    isPrintPaused = false;
-    pause_time += (_millis() - start_pause_print); //accumulate time when print is paused for correct statistics calculation
+    print_job_timer.start();
     refresh_cmd_timeout();
     SERIAL_PROTOCOLLNRPGM(MSG_OCTOPRINT_RESUMED); //resume octoprint
     custom_message_type = CustomMsg::Status;
@@ -5122,6 +5124,15 @@ static void lcd_sheet_menu()
     MENU_END();
 }
 
+//! @brief Set printer state
+//! Sends the printer state for next print via LCD menu to host
+//! The host has to set the printer ready state with `M72` to keep printer in sync with the host
+//! @endcode
+static void lcd_printer_ready_state_toggle()
+{
+    enquecommandf_P(PSTR("M118 %S"), (GetPrinterState() == PrinterState::IsReady) ? MSG_OCTOPRINT_NOT_READY : MSG_OCTOPRINT_READY);
+}
+
 //! @brief Show Main Menu
 //!
 //! @code{.unparsed}
@@ -5182,6 +5193,15 @@ static void lcd_main_menu()
     MENU_ITEM_FUNCTION_P(PSTR("power panic"), uvlo_);
 #endif //TMC2130_DEBUG
 
+    // Menu item for reprint
+    if(!printer_active() && (heating_status == HeatingStatus::NO_HEATING)) {
+        if ((GetPrinterState() == PrinterState::SDPrintingFinished) && card.cardOK) {
+            MENU_ITEM_SUBMENU_P(_T(MSG_REPRINT), reprint_from_eeprom);
+        } else if (GetPrinterState() == PrinterState::HostPrintingFinished) {
+            MENU_ITEM_SUBMENU_P(_T(MSG_REPRINT), lcd_reprint_usb_print);
+        }
+    }
+
     // Menu is never shown when idle
     if (babystep_allowed_strict() && (printJobOngoing() || lcd_commands_type == LcdCommands::Layer1Cal))
         MENU_ITEM_SUBMENU_P(_T(MSG_BABYSTEP_Z), lcd_babystep_z);//8
@@ -5194,15 +5214,21 @@ static void lcd_main_menu()
     } else if (!Stopped) {
         MENU_ITEM_SUBMENU_P(_i("Preheat"), lcd_preheat_menu);////MSG_PREHEAT c=18
     }
-
-    if (mesh_bed_leveling_flag == false && homing_flag == false && !isPrintPaused && !processing_tcode) {
+    if (GetPrinterState() < PrinterState::IsSDPrinting && M79_timer_get_status()) {
+        if(GetPrinterState() == PrinterState::IsReady) {
+            MENU_ITEM_FUNCTION_P(_T(MSG_SET_NOT_READY), lcd_printer_ready_state_toggle);
+        } else {
+            MENU_ITEM_FUNCTION_P(_T(MSG_SET_READY), lcd_printer_ready_state_toggle);
+        }
+    }
+    if (mesh_bed_leveling_flag == false && homing_flag == false && !print_job_timer.isPaused() && !processing_tcode) {
         if (usb_timer.running()) {
             MENU_ITEM_FUNCTION_P(_T(MSG_PAUSE_PRINT), lcd_pause_usb_print);
         } else if (IS_SD_PRINTING) {
             MENU_ITEM_FUNCTION_P(_T(MSG_PAUSE_PRINT), lcd_pause_print);
         }
     }
-    if(isPrintPaused)
+    if(print_job_timer.isPaused())
     {
         // only allow resuming if hardware errors (temperature or fan) are cleared
         if(!get_temp_error()
@@ -5217,7 +5243,7 @@ static void lcd_main_menu()
             }
         }
     }
-    if((printJobOngoing() || isPrintPaused) && (custom_message_type != CustomMsg::MeshBedLeveling) && !processing_tcode) {
+    if((printJobOngoing() || print_job_timer.isPaused()) && (custom_message_type != CustomMsg::MeshBedLeveling) && !processing_tcode) {
         MENU_ITEM_SUBMENU_P(_T(MSG_STOP_PRINT), lcd_sdcard_stop);
     }
 #ifdef THERMAL_MODEL
@@ -5290,12 +5316,10 @@ static void lcd_main_menu()
             MENU_ITEM_SUBMENU_P(_T(MSG_UNLOAD_FILAMENT), lcd_unLoadFilament);
         }
         MENU_ITEM_SUBMENU_P(_T(MSG_SETTINGS), lcd_settings_menu);
-        if(!isPrintPaused) MENU_ITEM_SUBMENU_P(_T(MSG_CALIBRATION), lcd_calibration_menu);
+        if(!print_job_timer.isPaused()) MENU_ITEM_SUBMENU_P(_T(MSG_CALIBRATION), lcd_calibration_menu);
     }
 
-    if (!usb_timer.running()) {
         MENU_ITEM_SUBMENU_P(_i("Statistics"), lcd_menu_statistics);////MSG_STATISTICS c=18
-    }
 
 #if defined(TMC2130) || defined(FILAMENT_SENSOR)
     MENU_ITEM_SUBMENU_P(_i("Fail stats"), lcd_menu_fails_stats);////MSG_FAIL_STATS c=18
@@ -5448,7 +5472,7 @@ static void lcd_tune_menu()
     if (!farm_mode)
         MENU_ITEM_FUNCTION_P(_T(MSG_FILAMENTCHANGE), lcd_colorprint_change);
 #endif
-    if (isPrintPaused) {// Don't allow rehome if actively printing. Maaaaybe it could work to insert on the fly, seems too risky.
+    if (print_job_timer.isPaused()) {// Don't allow rehome if actively printing. Maaaaybe it could work to insert on the fly, seems too risky.
         MENU_ITEM_FUNCTION_P(_T(MSG_AUTO_HOME), lcd_rehome_xy);
     }
 #ifdef FILAMENT_SENSOR
@@ -5583,9 +5607,7 @@ static void lcd_sd_updir()
 // continue stopping the print from the main loop after lcd_print_stop() is called
 void lcd_print_stop_finish()
 {
-    // Convert the time from ms to minutes, divide by 60 * 1000
-    uint32_t t = (_millis() - starttime - pause_time) / 60000;
-    save_statistics(total_filament_used, t);
+    save_statistics();
 
     // lift Z
     raise_z(10);
@@ -5612,7 +5634,7 @@ void lcd_print_stop_finish()
 
     if (MMU2::mmu2.Enabled() && MMU2::mmu2.FindaDetectsFilament())
     {
-        if (isPrintPaused)
+        if (print_job_timer.isPaused())
         {
             // Restore temperature saved in ram after pausing print
             restore_extruder_temperature_from_ram();
@@ -5642,8 +5664,7 @@ void print_stop(bool interactive)
 #endif
 
     // clear any pending paused state immediately
-    pause_time = 0;
-    isPrintPaused = false;
+    print_job_timer.stop();
 
     if (interactive) {
         // acknowledged by the user from the LCD: resume processing USB commands again
@@ -5652,6 +5673,7 @@ void print_stop(bool interactive)
 
     // return to status is required to continue processing in the main loop!
     lcd_commands_type = LcdCommands::StopPrint;
+    SetPrinterState(PrinterState::NotReady); //set printer state to show LCD menu after print has been stopped
     lcd_return_to_status();
 }
 
@@ -7440,4 +7462,51 @@ void lcd_heat_bed_on_load_toggle()
     else
         value = !value;
     eeprom_update_byte((uint8_t*)EEPROM_HEAT_BED_ON_LOAD_FILAMENT, value);
+}
+
+void reprint_from_eeprom() {
+	char filename[13];
+	char altfilename[13];
+	uint8_t depth = 0;
+	char dir_name[9];
+
+	depth = eeprom_read_byte((uint8_t*)EEPROM_DIR_DEPTH);
+
+	for (int i = 0; i < depth; i++) {
+		for (int j = 0; j < 8; j++) {
+			dir_name[j] = eeprom_read_byte((uint8_t*)EEPROM_DIRS + j + 8 * i);
+		}
+		dir_name[8] = '\0';
+		card.chdir(dir_name, false);
+	}
+
+	for (int i = 0; i < 8; i++) {
+		filename[i] = eeprom_read_byte((uint8_t*)EEPROM_FILENAME + i);
+	}
+	filename[8] = '\0';
+
+	strcpy(altfilename,filename);
+	if (!card.FileExists(altfilename))
+	{
+		strcat_P(filename, PSTR(".gco"));
+		if (card.FileExists(filename))
+		{
+			strcpy(altfilename,filename);
+		}else
+		{
+			strcat_P(altfilename, PSTR(".g"));
+		}
+	}
+    // M23: Select SD file
+    enquecommandf_P(MSG_M23, altfilename);
+    // M24: Start/resume SD print
+    enquecommand_P(MSG_M24);
+    lcd_return_to_status();
+}
+
+//! @brief Send host action "reprint"
+void lcd_reprint_usb_print()
+{
+    SERIAL_PROTOCOLLNRPGM(MSG_OCTOPRINT_REPRINT);
+    lcd_return_to_status();
 }

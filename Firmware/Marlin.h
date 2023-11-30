@@ -22,6 +22,7 @@
 #include "pins.h"
 #include "Timer.h"
 #include "mmu2.h"
+#include "printer_state.h"
 
 #ifndef AT90USB
 #define  HardwareSerial_h // trick to disable the standard HWserial
@@ -262,18 +263,13 @@ extern float retract_length_swap;
 extern float retract_recover_length_swap;
 #endif
 
-extern uint32_t starttime; // milliseconds
-extern uint32_t pause_time; // milliseconds
-extern uint32_t start_pause_print; // milliseconds
 extern ShortTimer usb_timer;
 extern bool processing_tcode;
 extern bool homing_flag;
 extern uint32_t total_filament_used; // mm/100 or 10um
 
 /// @brief Save print statistics to EEPROM
-/// @param _total_filament_used has unit mm/100 or 10um
-/// @param _total_print_time has unit minutes, for example 123 minutes
-void save_statistics(uint32_t _total_filament_used, uint32_t _total_print_time);
+void save_statistics();
 
 extern int fan_edge_counter[2];
 extern int fan_speed[2];
@@ -449,8 +445,8 @@ void gcode_M701(float fastLoadLength, uint8_t mmuSlotIndex);
 
 void M600_load_filament();
 void M600_load_filament_movements();
-void M600_wait_for_user(float HotendTempBckp);
-void M600_check_state(float nozzle_temp);
+void M600_wait_for_user();
+void M600_check_state();
 void load_filament_final_feed();
 void marlin_wait_for_click();
 float raise_z(float delta);
@@ -460,5 +456,4 @@ extern "C" void softReset();
 void stack_error();
 
 extern uint32_t IP_address;
-
 #endif

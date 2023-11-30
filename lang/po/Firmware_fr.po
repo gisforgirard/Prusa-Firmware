@@ -2144,7 +2144,6 @@ msgstr ""
 "L'idler ne peut pas se mettre correctement à zéro. Vérifiez s'il y a quoi "
 "que ce soit qui bloque son mouvement."
 
-
 #. MSG_DESC_SELECTOR_CANNOT_HOME c=20 r=8
 #: ../../Firmware/mmu2/errors_list.h:249 ../../Firmware/mmu2/errors_list.h:305
 msgid ""
@@ -2589,6 +2588,21 @@ msgstr "Sensibilité"
 #: ../../Firmware/Marlin_main.cpp:2976
 msgid "Mesh bed leveling failed. Please run Z calibration."
 msgstr "Mesh bed leveling a échoué. Veuillez procéder à l'étalonnage Z."
+
+#. MSG_SET_READY c=18
+#: ../../Firmware/messages.cpp:104 ../../Firmware/ultralcd.cpp:5204
+msgid "Set Ready"
+msgstr "Ensemble prête"
+
+#. MSG_SET_NOT_READY c=18
+#: ../../Firmware/messages.cpp:106 ../../Firmware/ultralcd.cpp:5211
+msgid "Set not Ready"
+msgstr "Ensemble pas prête"
+
+#. MSG_REPRINT c=18
+#: ../../Firmware/messages.cpp:190 ../../Firmware/ultralcd.cpp:5191
+msgid "Reprint"
+msgstr "Ré-imprimer"
 
 #~ msgid "Remove old filament and press the knob to start loading new filament."
 #~ msgstr ""
